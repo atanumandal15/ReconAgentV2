@@ -26,13 +26,40 @@ def _load_records() -> list[dict]:
 def _to_display_df(raw: list[dict]) -> pd.DataFrame:
     rows = []
     for r in raw:
-        final = json.loads(r.get("final_data") or "{}")
+        final  = json.loads(r.get("final_data") or "{}")
+        fields = final.get("fields") or {}
+
+        # doc_type: prefer final_data value, fall back to DB column
+        raw_type = final.get("doc_type") or r.get("doc_type") or "unknown"
+        if raw_type in ("unknown", "other", "", None):
+            # Try to infer from extracted fields
+            if fields.get("invoice_number") or fields.get("invoice_date"):
+                raw_type = "invoice"
+            elif fields.get("receipt_number") or fields.get("transaction_id"):
+                raw_type = "receipt"
+
+        vendor = (
+            fields.get("vendor_name") or fields.get("vendor") or
+            fields.get("supplier_name") or fields.get("merchant") or "—"
+        )
+
+        total_raw = (
+            fields.get("total_amount") or fields.get("total") or
+            fields.get("amount_due") or fields.get("grand_total") or
+            fields.get("invoice_total") or fields.get("amount_payable")
+        )
+        try:
+            total = float(str(total_raw).replace(",", "").replace("$", "")
+                          .replace("₹", "").replace("€", "").strip()) if total_raw else None
+        except Exception:
+            total = None
+
         rows.append({
             "ID":         r["document_id"][:8],
             "File":       (r.get("source_path") or "").split("/")[-1] or "—",
-            "Type":       (r.get("doc_type") or "invoice").title(),
-            "Vendor":     final.get("vendor_name") or "—",
-            "Total":      final.get("total_amount"),
+            "Type":       raw_type.replace("_", " ").title(),
+            "Vendor":     vendor,
+            "Total":      total,
             "Status":     r.get("validation_status", "unknown"),
             "Confidence": f"{(r.get('extraction_confidence') or 0)*100:.0f}%",
             "Date":       (r.get("created_at") or "")[:10],
